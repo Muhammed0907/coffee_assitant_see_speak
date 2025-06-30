@@ -25,6 +25,8 @@ LAST_ASSISTANT_RESPONSE = ""
 STOP_EVENT = threading.Event()
 NOW_SPEAKING = threading.Lock()
 USER_ABSENT = threading.Event()  # Set when user is absent or too far away
+SHOULD_LISTEN = threading.Event()  # Set when microphone should be listening (controlled by API)
+SHOULD_LISTEN.set()  # Default to listening enabled
 
 text_to_synthesize = '想不到时间过得这么快！昨天和你视频聊天，看到你那自豪又满意的笑容，我的心里呀，就如同喝了一瓶蜜一样甜呢！真心为你开心呢！'
 

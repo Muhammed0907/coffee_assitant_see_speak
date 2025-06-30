@@ -10,7 +10,7 @@ import pyaudio  # For pyaudio error handling
 
 import dashscope
 from dashscope.audio.asr import *
-from speak import userQueryQueue, LAST_ASSISTANT_RESPONSE, NOW_SPEAKING, USER_ABSENT
+from speak import userQueryQueue, LAST_ASSISTANT_RESPONSE, NOW_SPEAKING, USER_ABSENT, SHOULD_LISTEN
 from echocheck import is_likely_system_echo
 
 mic = None
@@ -180,11 +180,32 @@ def mic_listen():
     consecutive_recognition_stops = 0  # Track consecutive recognition stops
     recognition_paused_for_speech = False
     recognition_paused_for_absence = False
+    recognition_paused_for_listen_status = False
     last_check_time = time.time()
     
     while True:
         try:
             current_time = time.time()
+            
+            # FIRST CHECK: If listening is disabled by API, skip everything
+            if not SHOULD_LISTEN.is_set():
+                # Stop any existing recognition
+                if recognition is not None:
+                    try:
+                        recognition.stop()
+                        print("Recognition service stopped due to API setting")
+                    except Exception as e:
+                        print(f"Error stopping recognition: {e}")
+                    recognition = None
+                
+                # Reset all pause flags
+                recognition_paused_for_listen_status = True
+                recognition_paused_for_speech = False
+                recognition_paused_for_absence = False
+                
+                # Wait longer to reduce CPU usage when listening is disabled
+                time.sleep(3.0)
+                continue
             
             # ULTRA OPTIMIZED: Maximum status check frequency reduction for CPU savings
             if current_time - last_check_time < 1.5:  # Check only every 1.5 seconds
@@ -192,6 +213,15 @@ def mic_listen():
                 continue
                 
             last_check_time = current_time
+            
+            # Check if listening was just re-enabled by API
+            if recognition_paused_for_listen_status and SHOULD_LISTEN.is_set():
+                print("Listening enabled by API, restarting speech recognition")
+                recognition_paused_for_listen_status = False
+                # Reset consecutive stops counter since this is an intentional restart
+                consecutive_recognition_stops = 0
+                # Small delay to make sure everything is ready
+                time.sleep(1.0)
                 
             # Check if user is absent
             if USER_ABSENT.is_set():
@@ -211,7 +241,7 @@ def mic_listen():
                 continue
             
             # User is present now, check if we need to restart recognition
-            if recognition_paused_for_absence and recognition is None:
+            if recognition_paused_for_absence and recognition is None and SHOULD_LISTEN.is_set():
                 print("User returned, restarting speech recognition")
                 recognition_paused_for_absence = False
                 # Reset consecutive stops counter since this is an intentional restart
@@ -237,7 +267,7 @@ def mic_listen():
                 continue
             
             # System is not speaking now, check if we need to restart recognition
-            if recognition_paused_for_speech and recognition is None:
+            if recognition_paused_for_speech and recognition is None and SHOULD_LISTEN.is_set():
                 print("System speech ended, restarting speech recognition")
                 recognition_paused_for_speech = False
                 # Reset consecutive stops counter since this is an intentional restart
@@ -271,8 +301,8 @@ def mic_listen():
                 except Exception as reset_error:
                     print(f"Error during audio reset: {reset_error}")
             
-            # Initialize recognition if needed
-            if recognition is None:
+            # Initialize recognition if needed (only if listening is enabled)
+            if recognition is None and SHOULD_LISTEN.is_set():
                 # Call recognition service by async mode
                 recognition = Recognition(
                     model='paraformer-realtime-v2',
@@ -287,6 +317,10 @@ def mic_listen():
                 # Reset retry count on successful connection
                 retry_count = 0
                 last_activity_time = time.time()
+            elif recognition is None and not SHOULD_LISTEN.is_set():
+                # Skip initialization when listening is disabled
+                time.sleep(2.0)
+                continue
             
             # Only set up signal handler in the main thread
             is_main_thread = threading.current_thread() is threading.main_thread()

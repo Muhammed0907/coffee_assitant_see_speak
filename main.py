@@ -14,7 +14,8 @@ from speak import ( init_dashscope_api_key,
                     LAST_ASSISTANT_RESPONSE, 
                     STOP_EVENT, 
                     NOW_SPEAKING,
-                    USER_ABSENT)
+                    USER_ABSENT,
+                    SHOULD_LISTEN)
 
 from greetings import (male_greetings, 
                        female_greetings, 
@@ -53,6 +54,8 @@ face_detected = False
 suggest_interval = 30  # seconds
 stop_event = threading.Event()
 is_greeted = False
+
+# Listening control is now handled by SHOULD_LISTEN Event in speak.py
 
 # Face distance estimation constants
 KNOWN_FACE_WIDTH = 0.15  # Average human face width in meters (15cm)
@@ -100,6 +103,7 @@ def auto_speak_loop():
             # t = threading.Thread(target=play_speech, args=(f"。　{no_user_messages[index]}　。",), daemon=True)
             t.start()
 
+
 # Listen status monitoring thread function
 def listen_status_monitor():
     """Monitor listening status from API every minute"""
@@ -116,6 +120,18 @@ def listen_status_monitor():
             
             if code == 1:
                 print("Listen Status Error - API returned error code 1")
+                # On error, keep current listening state
+            else:
+                # Update listening status based on API response
+                previous_status = SHOULD_LISTEN.is_set()
+                if data:
+                    SHOULD_LISTEN.set()
+                else:
+                    SHOULD_LISTEN.clear()
+                
+                if previous_status != data:
+                    status_text = "enabled" if data else "disabled"
+                    print(f"Microphone listening {status_text}")
             
         except Exception as e:
             print(f"Listen Status Monitor Error: {e}")
