@@ -26,6 +26,9 @@ import random
 import os
 import multiprocessing
 
+# Seed random number generator for better randomness
+random.seed()
+
 try:
     import psutil
     PSUTIL_AVAILABLE = True
@@ -55,7 +58,8 @@ is_greeted = False
 KNOWN_FACE_WIDTH = 0.15  # Average human face width in meters (15cm)
 FOCAL_LENGTH = 500  # Approximate focal length, will need calibration for accuracy
 
-
+# def getProdcutDetail(machine_id):
+    # apiResult = fet
 
 # Queue for sharing detected gender
 gender_queue = multiprocessing.Queue()
@@ -77,11 +81,23 @@ def suggest_loop():
             t = threading.Thread(target=play_speech, args=(f"。　{AUTO_SUGGESTIONS[index]}　。",), daemon=True)
             t.start()
 
-def speak_loop():
+# Auto-speak thread function - speaks every minute when no user exists
+def auto_speak_loop():
+    auto_speak_interval = 60  # 1 minute
     while not stop_event.is_set():
-        time.sleep(1)
-        if face_detected and NOW_SPEAKING.acquire(blocking=False):
+        time.sleep(auto_speak_interval)
+        # Only speak when no user is detected and not currently speaking
+        if not face_detected and NOW_SPEAKING.acquire(blocking=False):
+            # Use a subset of suggestions or specific messages for when no user is present
+            # no_user_messages = [
+            #     "欢迎光临我们的咖啡店",
+            #     "今日特色饮品等您品尝",
+            #     "需要帮助请随时呼唤我"
+            # ]
+            # index = random.randint(0, len(no_user_messages) - 1)
+            index = random.randint(0, len(AUTO_SUGGESTIONS) - 1)
             t = threading.Thread(target=play_speech, args=(f"。　{AUTO_SUGGESTIONS[index]}　。",), daemon=True)
+            # t = threading.Thread(target=play_speech, args=(f"。　{no_user_messages[index]}　。",), daemon=True)
             t.start()
 
 
@@ -355,6 +371,7 @@ if __name__ == "__main__":
     # print(NO_RESPONSE_NEEDED_RULE)
     # global AUTO_SUGGESTIONSs
     # global GREETINGs
+    from aiUnderstandPrompt import PromptUnderstand
     
     # Initialize CPU optimizations
     print("Initializing CPU optimizations...")
@@ -389,8 +406,12 @@ if __name__ == "__main__":
         products = result.get("products")
         prompt = result.get("prompt")
 
-        prompt += "你可以推荐以下饮品：\n" + ",".join(products)    
+        prompt += ".你可以推荐以下饮品：\n" + ",".join(products)    
+        # aboutPrompt = PromptUnderstand(prompt)
+        NO_RESPONSE_NEEDED_RULE = "。\n重要过滤指令: 如果对话不是关于'"  + ",".join(products)+ "' "+  NO_RESPONSE_NEEDED_RULE
         prompt += NO_RESPONSE_NEEDED_RULE
+        # print(prompt)
+        # sys.exit(-1)
         SYSTEM_PROMPT = prompt
         # print(result.get("greetings"))
         GREETINGs = result.get("greetings")
@@ -406,6 +427,7 @@ if __name__ == "__main__":
     threading.Thread(target=face_detection_loop, daemon=True).start()
     threading.Thread(target=LLM_Speak, args=(SYSTEM_PROMPT,), daemon=True).start()
     threading.Thread(target=suggest_loop, daemon=True).start()
+    threading.Thread(target=auto_speak_loop, daemon=True).start()
     threading.Thread(target=mic_listen, daemon=True).start()
     # threading.Thread(target=get_user_input, daemon=True).start()
     

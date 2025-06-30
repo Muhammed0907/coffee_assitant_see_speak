@@ -10,6 +10,9 @@ from chat import SYSTEM_PROMPT
 from echocheck import is_likely_system_echo
 import random
 
+# Seed random number generator for better randomness
+random.seed()
+
 # Argument parser for headless mode
 import os
 import argparse

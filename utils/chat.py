@@ -15,8 +15,7 @@ SYSTEM_PROMPT =  """你是一个友好热情的盲合活动组织者。你的主
 记住，当你决定回复时，你的目标是让参与者感到受欢迎并愿意参加一次盲合。每次回复都应该友好且积极，不要使用过于正式的语言。"""
 
 
-NO_RESPONSE_NEEDED_RULE = """
-重要过滤指令：
+NO_RESPONSE_NEEDED_RULE = """回复 "NO_RESPONSE_NEEDED"
 - 如果对话不是明确直接对你说的，回复 "NO_RESPONSE_NEEDED"
 - 如果对话属于以下情况，回复 "NO_RESPONSE_NEEDED"：
   • 第三方之间的交流

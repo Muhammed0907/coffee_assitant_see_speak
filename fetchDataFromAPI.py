@@ -12,9 +12,12 @@ def fetch_product_by_name(machine_id):
         # URL-encode the product name
         encoded_name = quote(machine_id)
         url = f"{API_BASE_URL}{encoded_name}"
+        # print(url)
         
         response = requests.get(url, timeout=5)  # 5 second timeout
-        # print(f"RES: {response}")
+        # print(f"RES: {response.json()['code']}")
+        if response.json()['code'] == 1:
+            return {"error": "Product not found"}
         if response.status_code == 200:
             return response.json()
         elif response.status_code == 404:
