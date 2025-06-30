@@ -4,6 +4,7 @@ import json
 from urllib.parse import quote
 
 API_BASE_URL = "http://192.168.2.35:8000/screen/ai-assistant/detail/{machineId}?machineId="
+LISTEN_STATUS_URL = "http://192.168.2.35:8000/screen/ai-assistant/isListen/"
 # API_BASE_URL = "http://localhost:5000/products"
 
 def fetch_product_by_name(machine_id):
@@ -27,6 +28,25 @@ def fetch_product_by_name(machine_id):
             
     except requests.exceptions.RequestException as e:
         return {"error": f"Connection error: {str(e)}"}
+
+def check_listen_status(machine_id):
+    """Check if the system should be listening by fetching isListen API"""
+    try:
+        url = f"{LISTEN_STATUS_URL}{machine_id}"
+        response = requests.get(url, timeout=5)
+        
+        if response.status_code == 200:
+            data = response.json()
+            return {
+                "code": data.get("code", 1),
+                "data": data.get("data", False),
+                "msg": data.get("msg", None)
+            }
+        else:
+            return {"code": 1, "data": False, "msg": f"HTTP {response.status_code}"}
+            
+    except requests.exceptions.RequestException as e:
+        return {"code": 1, "data": False, "msg": f"Connection error: {str(e)}"}
 
 def main():
     parser = argparse.ArgumentParser(description="Fetch product details by name")

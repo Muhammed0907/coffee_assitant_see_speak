@@ -1,4 +1,4 @@
-from fetchDataFromAPI import fetch_product_by_name
+from fetchDataFromAPI import fetch_product_by_name, check_listen_status
 import sys
 from listener import mic_listen
 import cv2
@@ -99,6 +99,28 @@ def auto_speak_loop():
             t = threading.Thread(target=play_speech, args=(f"。　{AUTO_SUGGESTIONS[index]}　。",), daemon=True)
             # t = threading.Thread(target=play_speech, args=(f"。　{no_user_messages[index]}　。",), daemon=True)
             t.start()
+
+# Listen status monitoring thread function
+def listen_status_monitor():
+    """Monitor listening status from API every minute"""
+    monitor_interval = 60  # 1 minute
+    machine_id = "6"  # Using the same machine ID as in main
+    
+    while not stop_event.is_set():
+        try:
+            status_result = check_listen_status(machine_id)
+            code = status_result.get("code", 1)
+            data = status_result.get("data", False)
+            
+            print(f"Listen Status - Data: {data}, Code: {code}")
+            
+            if code == 1:
+                print("Listen Status Error - API returned error code 1")
+            
+        except Exception as e:
+            print(f"Listen Status Monitor Error: {e}")
+        
+        time.sleep(monitor_interval)
 
 
 GREETINGs = []
@@ -428,6 +450,7 @@ if __name__ == "__main__":
     threading.Thread(target=LLM_Speak, args=(SYSTEM_PROMPT,), daemon=True).start()
     threading.Thread(target=suggest_loop, daemon=True).start()
     threading.Thread(target=auto_speak_loop, daemon=True).start()
+    threading.Thread(target=listen_status_monitor, daemon=True).start()
     threading.Thread(target=mic_listen, daemon=True).start()
     # threading.Thread(target=get_user_input, daemon=True).start()
     
