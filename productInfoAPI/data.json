@@ -24,6 +24,12 @@
         "想让配对更自然，我可以根据您的兴趣爱好来推荐。",
         "我们也提供线上匿名配对，如果您更喜欢先线上交流的话。"
     ],
+      "noperson_suggestions": [
+        "欢迎光临我们的盲合活动现场",
+        "今日精彩盲合活动等您参与",
+        "需要帮助请随时呼唤我",
+        "快来体验有趣的配对活动吧"
+      ],
       "product_name": "MangHe"
     },
     {
@@ -50,6 +56,12 @@
         "窗边位置能看到咖啡烘焙过程，要不要边看火焰边等您的饮品？",
         "今天生日的话，点任意饮品送咖啡豆标本钥匙扣喔～"
       ],
+      "noperson_suggestions": [
+        "欢迎光临我们的咖啡店",
+        "今日特色饮品等您品尝",
+        "需要帮助请随时呼唤我",
+        "香浓咖啡等您来品"
+      ],
       "product_name": "Coffee"
     },
     {
@@ -59,6 +71,12 @@
         "Traditional Cappuccino",
         "Dry Cappuccino",
         "Wet Cappuccino"
+      ],
+      "noperson_suggestions": [
+        "Welcome to our coffee corner",
+        "Fresh coffee awaiting you",
+        "Call me if you need assistance",
+        "Great coffee experience awaits"
       ],
       "product_name": "Cappuccino"
     }

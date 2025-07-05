@@ -13,6 +13,14 @@ from dashscope.audio.asr import *
 from speak import userQueryQueue, LAST_ASSISTANT_RESPONSE, NOW_SPEAKING, USER_ABSENT, SHOULD_LISTEN
 from echocheck import is_likely_system_echo
 
+# Global application state - will be set by main.py
+APPLICATION_SHOULD_RUN = None
+
+def set_application_state_reference(state_ref):
+    """Set reference to application state"""
+    global APPLICATION_SHOULD_RUN
+    APPLICATION_SHOULD_RUN = state_ref
+
 mic = None
 stream = None
 
@@ -142,9 +150,13 @@ class Callback(RecognitionCallback):
         if 'text' in sentence:
             if RecognitionResult.is_sentence_end(sentence):
                 print('RecognitionCallback text: ', sentence['text'])
-                # Check if system is speaking (lock is acquired)
+                        # Check if system is speaking (lock is acquired)
                 if NOW_SPEAKING.locked():
                     print("System is speaking, ignoring user input")
+                    return
+                # Check if application should run
+                if APPLICATION_SHOULD_RUN is not None and not APPLICATION_SHOULD_RUN():
+                    print("Application disabled, ignoring user input")
                     return
                 # Also check for echo
                 if is_likely_system_echo(sentence['text'], LAST_ASSISTANT_RESPONSE):
@@ -171,6 +183,9 @@ def signal_handler(sig, frame):
     # Forcefully exit the program
     sys.exit(0)
 
+
+# def isLenedteEntd
+
 def mic_listen():
     global mic, stream
     callback = Callback()
@@ -187,7 +202,27 @@ def mic_listen():
         try:
             current_time = time.time()
             
-            # FIRST CHECK: If listening is disabled by API, skip everything
+            # FIRST CHECK: If application should not run, skip everything
+            if APPLICATION_SHOULD_RUN is not None and not APPLICATION_SHOULD_RUN():
+                # Stop any existing recognition
+                if recognition is not None:
+                    try:
+                        recognition.stop()
+                        print("Recognition service stopped - application disabled")
+                    except Exception as e:
+                        print(f"Error stopping recognition: {e}")
+                    recognition = None
+                
+                # Reset all pause flags
+                recognition_paused_for_listen_status = True
+                recognition_paused_for_speech = False
+                recognition_paused_for_absence = False
+                
+                # Wait longer to reduce CPU usage when application is disabled
+                time.sleep(3.0)
+                continue
+            
+            # SECOND CHECK: If listening is disabled by API, skip everything
             if not SHOULD_LISTEN.is_set():
                 # Stop any existing recognition
                 if recognition is not None:

@@ -26,70 +26,91 @@ class RealtimeMp3Player:
         self.stop_event = threading.Event()
 
     def start(self):
-        self._player = pyaudio.PyAudio()  # initialize pyaudio to play audio
-        
-        # Try to find a working audio device
-        device_index = self._find_audio_device()
-        
-        self._stream = self._player.open(
-            format=pyaudio.paInt16, 
-            channels=1, 
-            rate=22050,
-            output=True,
-            output_device_index=device_index)  # initialize pyaudio stream
         try:
-            self.ffmpeg_process = subprocess.Popen(
-                [
-                    'ffmpeg', '-i', 'pipe:0', '-f', 's16le', '-ar', '22050',
-                    '-ac', '1', 'pipe:1'
-                ],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-            )  # initialize ffmpeg to decode mp3
-            if self.verbose:
-                print('mp3 audio player is started')
-        except subprocess.CalledProcessError as e:
-            # Capturing ffmpeg exceptions, printing error details
-            print(f'An error occurred: {e}')
+            self._player = pyaudio.PyAudio()  # initialize pyaudio to play audio
+            
+            # Try to find a working audio device
+            device_index = self._find_audio_device()
+            
+            # Try to open audio stream with error handling
+            try:
+                self._stream = self._player.open(
+                    format=pyaudio.paInt16, 
+                    channels=1, 
+                    rate=22050,
+                    output=True,
+                    output_device_index=device_index)  # initialize pyaudio stream
+            except OSError as e:
+                if "Unanticipated host error" in str(e):
+                    print(f"Audio device error: {e}. Trying to recover...")
+                    # Clean up and retry with different approach
+                    try:
+                        self._player.terminate()
+                        self._player = pyaudio.PyAudio()
+                        # Force use of ALSA directly if PulseAudio fails
+                        self._stream = self._player.open(
+                            format=pyaudio.paInt16, 
+                            channels=1, 
+                            rate=22050,
+                            output=True,
+                            output_device_index=0)  # Force device 0 (bcm2835)
+                        print("Successfully recovered using ALSA device 0")
+                    except Exception as retry_error:
+                        print(f"Recovery failed: {retry_error}")
+                        raise
+                else:
+                    raise
+            
+            try:
+                self.ffmpeg_process = subprocess.Popen(
+                    [
+                        'ffmpeg', '-i', 'pipe:0', '-f', 's16le', '-ar', '22050',
+                        '-ac', '1', 'pipe:1'
+                    ],
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                )  # initialize ffmpeg to decode mp3
+                if self.verbose:
+                    print('mp3 audio player is started')
+            except subprocess.CalledProcessError as e:
+                # Capturing ffmpeg exceptions, printing error details
+                print(f'FFmpeg error: {e}')
+                raise
         except Exception as e:
             print(f'Audio initialization error: {e}')
             raise
     
     def _find_audio_device(self):
         """Find a working audio output device"""
-        try:
-            # First try default device
-            return None
-        except:
-            # If default fails, try to find HDMI or other available devices
-            for i in range(self._player.get_device_count()):
-                try:
-                    device_info = self._player.get_device_info_by_index(i)
-                    if device_info['maxOutputChannels'] > 0:
-                        if self.verbose:
-                            print(f"Trying audio device {i}: {device_info['name']}")
-                        # Test if this device works
-                        test_stream = self._player.open(
-                            format=pyaudio.paInt16,
-                            channels=1,
-                            rate=22050,
-                            output=True,
-                            output_device_index=i,
-                            frames_per_buffer=1024
-                        )
-                        test_stream.close()
-                        if self.verbose:
-                            print(f"Using audio device {i}: {device_info['name']}")
-                        return i
-                except Exception as e:
+        # First try to find HDMI or other available devices
+        for i in range(self._player.get_device_count()):
+            try:
+                device_info = self._player.get_device_info_by_index(i)
+                if device_info['maxOutputChannels'] > 0:
                     if self.verbose:
-                        print(f"Device {i} failed: {e}")
-                    continue
-            
-            # If no device works, return None and let PyAudio handle it
-            print("Warning: No working audio device found, using default")
-            return None
+                        print(f"Trying audio device {i}: {device_info['name']}")
+                    # Test if this device works
+                    test_stream = self._player.open(
+                        format=pyaudio.paInt16,
+                        channels=1,
+                        rate=22050,
+                        output=True,
+                        output_device_index=i,
+                        frames_per_buffer=1024
+                    )
+                    test_stream.close()
+                    if self.verbose:
+                        print(f"Using audio device {i}: {device_info['name']}")
+                    return i
+            except Exception as e:
+                if self.verbose:
+                    print(f"Device {i} failed: {e}")
+                continue
+        
+        # If no device works, return None and let PyAudio handle it
+        print("Warning: No working audio device found, using default")
+        return None
 
     def stop(self):
         try:

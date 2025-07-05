@@ -59,9 +59,13 @@ def synthesis_text_to_speech_and_play_by_streaming_mode(text):
     # Update the last assistant response for echo detection
     LAST_ASSISTANT_RESPONSE = text
     
-    player = RealtimeMp3Player()
-    # start player
-    player.start()
+    player = RealtimeMp3Player(verbose=True)
+    # start player with error handling
+    try:
+        player.start()
+    except Exception as e:
+        print(f"Failed to initialize audio player: {e}")
+        return  # Skip TTS if audio fails
 
     complete_event = threading.Event()
 
@@ -100,7 +104,7 @@ def synthesis_text_to_speech_and_play_by_streaming_mode(text):
     # Initialize the speech synthesizer
     # you can customize the synthesis parameters, like voice, format, sample_rate or other parameters
     speech_synthesizer = SpeechSynthesizer(model='cosyvoice-v1',
-                                           voice='loongstella',
+                                           voice='longke',
                                            callback=synthesizer_callback)
 
     speech_synthesizer.call(text)
@@ -298,8 +302,12 @@ def LLM_Speak(systemPrompt: str):
         try:
             # Reset and start new TTS session
             STOP_EVENT.clear()
-            player = RealtimeMp3Player()
-            player.start()
+            player = RealtimeMp3Player(verbose=True)
+            try:
+                player.start()
+            except Exception as e:
+                print(f"Failed to initialize audio player: {e}")
+                continue  # Skip this response if audio fails
             callback = TTSCallback()
             synthesizer = SpeechSynthesizer(model='cosyvoice-v1', voice='loongstella', callback=callback)
 
