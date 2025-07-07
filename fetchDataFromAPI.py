@@ -3,8 +3,8 @@ import argparse
 import json
 from urllib.parse import quote
 
-API_BASE_URL = "http://192.168.2.35:8000/screen/ai-assistant/detail/{machineId}?machineId="
-LISTEN_STATUS_URL = "http://192.168.2.35:8000/screen/ai-assistant/isListen/"
+API_BASE_URL = "https://manghe.shundaocehua.cn/screen/ai-assistant/detail/%7BmachineId%7D?machineId="
+LISTEN_STATUS_URL = "https://manghe.shundaocehua.cn/screen/ai-assistant/isListen/"
 # API_BASE_URL = "http://localhost:5000/products"
 
 def fetch_product_by_name(machine_id):

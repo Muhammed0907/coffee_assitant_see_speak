@@ -620,10 +620,10 @@ def face_detection_loop():
         print("Trying camera indices 0 and 1...")
         cap, working_cam_id = try_camera_indices()
         
-        # If still no camera found, wait and retry
+        # If still no camera found, wait briefly and retry
         if cap is None:
-            print(f"No working camera found (tried indices 0, 1). Retrying in {camera_retry_interval} seconds...")
-            time.sleep(camera_retry_interval)
+            print(f"No working camera found (tried indices 0, 1). Retrying immediately...")
+            time.sleep(1)  # Brief 1-second delay to prevent excessive CPU usage
             last_camera_retry = current_time
         else:
             print(f"Successfully connected to camera {working_cam_id}")
@@ -701,36 +701,35 @@ def face_detection_loop():
                 print("Camera disconnected or failed to read frame")
                 cap.release()
                 
-                # Try to reconnect to camera
-                if current_time - last_camera_retry >= camera_retry_interval:
-                    print("Attempting to reconnect to camera...")
-                    last_camera_retry = current_time
-                    
-                    # First try the working camera ID
-                    if working_cam_id != -1:
-                        print(f"Trying to reconnect to camera {working_cam_id}...")
-                        cap = cv2.VideoCapture(working_cam_id)
-                        if cap.isOpened():
-                            ret, test_frame = cap.read()
-                            if ret:
-                                print(f"Successfully reconnected to camera {working_cam_id}")
-                                setup_camera_properties(cap, camera_res, perf_settings)
-                                continue
-                            else:
-                                print(f"Camera {working_cam_id} opened but can't read frames")
-                                cap.release()
-                    
-                    # If reconnection failed, try camera indices 0 and 1
-                    print("Trying camera indices 0 and 1...")
-                    cap, new_cam_id = try_camera_indices()
-                    if cap is not None:
-                        print(f"Successfully switched to camera {new_cam_id}")
-                        working_cam_id = new_cam_id
-                        setup_camera_properties(cap, camera_res, perf_settings)
-                        continue
-                    else:
-                        print("No working camera found (tried indices 0, 1)")
-                        cap = None
+                # Try to reconnect to camera immediately
+                print("Attempting to reconnect to camera...")
+                last_camera_retry = current_time
+                
+                # First try the working camera ID
+                if working_cam_id != -1:
+                    print(f"Trying to reconnect to camera {working_cam_id}...")
+                    cap = cv2.VideoCapture(working_cam_id)
+                    if cap.isOpened():
+                        ret, test_frame = cap.read()
+                        if ret:
+                            print(f"Successfully reconnected to camera {working_cam_id}")
+                            setup_camera_properties(cap, camera_res, perf_settings)
+                            continue
+                        else:
+                            print(f"Camera {working_cam_id} opened but can't read frames")
+                            cap.release()
+                
+                # If reconnection failed, try camera indices 0 and 1
+                print("Trying camera indices 0 and 1...")
+                cap, new_cam_id = try_camera_indices()
+                if cap is not None:
+                    print(f"Successfully switched to camera {new_cam_id}")
+                    working_cam_id = new_cam_id
+                    setup_camera_properties(cap, camera_res, perf_settings)
+                    continue
+                else:
+                    print("No working camera found (tried indices 0, 1)")
+                    cap = None
                 
                 # If no camera available, wait and continue
                 if cap is None:
@@ -741,7 +740,7 @@ def face_detection_loop():
                         # Create a black frame to show camera disconnected message
                         frame = np.zeros((480, 640, 3), dtype=np.uint8)
                         cv2.putText(frame, "CAMERA DISCONNECTED", (50, 240), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
-                        cv2.putText(frame, f"Retry in {int(camera_retry_interval - (current_time - last_camera_retry))}s", (50, 280), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+                        cv2.putText(frame, "Retrying continuously...", (50, 280), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
                         cv2.imshow("InsightFace", frame)
                         if cv2.waitKey(1) & 0xFF == ord('q'):
                             break
