@@ -46,6 +46,7 @@ except ImportError:
 
 # Import CPU optimizer
 from cpu_optimizer import get_optimizer, optimize_process_priority, enable_cpu_affinity_optimization
+from websocket_server import init_websocket_server, update_user_presence
 
 # Argument parser for headless mode
 parser = argparse.ArgumentParser()
@@ -101,11 +102,113 @@ FRAME_SAVE_INTERVAL = 30.0  # Save frame every 30 seconds when user present (les
 FRAME_RETENTION_DAYS = 1  # Delete frames older than 1 day
 last_frame_save_time = 0
 
+# WebSocket update timing
+last_ws_update_time = 0
+
 # Listening control is now handled by SHOULD_LISTEN Event in speak.py
 
 # Face distance estimation constants
 KNOWN_FACE_WIDTH = 0.15  # Average human face width in meters (15cm)
 FOCAL_LENGTH = 500  # Approximate focal length, will need calibration for accuracy
+
+# Deck shuffling for auto-suggestions (to avoid repetition)
+auto_suggestions_available = []
+auto_suggestions_used = []
+no_person_suggestions_available = []
+no_person_suggestions_used = []
+suggestion_lock = threading.Lock()  # Thread safety for suggestion arrays
+
+# Deck shuffling for greetings (to avoid repetition)
+greetings_available = []
+greetings_used = []
+greeting_lock = threading.Lock()  # Thread safety for greeting arrays
+
+def initialize_suggestion_decks():
+    """Initialize the deck shuffling arrays for auto-suggestions"""
+    global auto_suggestions_available, auto_suggestions_used
+    global no_person_suggestions_available, no_person_suggestions_used
+    
+    with suggestion_lock:
+        # Initialize AUTO_SUGGESTIONS deck
+        auto_suggestions_available = AUTO_SUGGESTIONS.copy()
+        auto_suggestions_used = []
+        
+        # Initialize NO_PERSON_AUTO_SUGGESTIONS deck
+        no_person_suggestions_available = NO_PERSON_AUTO_SUGGESTIONS.copy()
+        no_person_suggestions_used = []
+        
+        print(f"Initialized suggestion decks: {len(auto_suggestions_available)} auto-suggestions, {len(no_person_suggestions_available)} no-person suggestions")
+
+def initialize_greeting_deck():
+    """Initialize the deck shuffling arrays for greetings"""
+    global greetings_available, greetings_used
+    
+    with greeting_lock:
+        # Initialize GREETINGS deck
+        greetings_available = GREETINGs.copy()
+        greetings_used = []
+        
+        print(f"Initialized greeting deck: {len(greetings_available)} greetings")
+
+def get_next_suggestion(is_person_present=True):
+    """Get next suggestion using deck shuffling approach"""
+    global auto_suggestions_available, auto_suggestions_used
+    global no_person_suggestions_available, no_person_suggestions_used
+    
+    with suggestion_lock:
+        if is_person_present:
+            # Handle AUTO_SUGGESTIONS
+            if not auto_suggestions_available:
+                # Refill from used suggestions
+                auto_suggestions_available = auto_suggestions_used.copy()
+                auto_suggestions_used = []
+                print("Refilled auto-suggestions deck")
+            
+            if auto_suggestions_available:
+                # Get random suggestion from available ones
+                index = random.randint(0, len(auto_suggestions_available) - 1)
+                suggestion = auto_suggestions_available.pop(index)
+                auto_suggestions_used.append(suggestion)
+                return suggestion
+            else:
+                return "需要推荐吗?"  # Fallback
+        else:
+            # Handle NO_PERSON_AUTO_SUGGESTIONS
+            if not no_person_suggestions_available:
+                # Refill from used suggestions
+                no_person_suggestions_available = no_person_suggestions_used.copy()
+                no_person_suggestions_used = []
+                print("Refilled no-person suggestions deck")
+            
+            if no_person_suggestions_available:
+                # Get random suggestion from available ones
+                index = random.randint(0, len(no_person_suggestions_available) - 1)
+                suggestion = no_person_suggestions_available.pop(index)
+                no_person_suggestions_used.append(suggestion)
+                return suggestion
+            else:
+                return "欢迎光临"  # Fallback
+
+def get_next_greeting():
+    """Get next greeting using deck shuffling approach"""
+    global greetings_available, greetings_used
+    
+    with greeting_lock:
+        # Handle GREETINGS
+        if not greetings_available:
+            # Refill from used greetings
+            greetings_available = greetings_used.copy()
+            greetings_used = []
+            print("Refilled greetings deck")
+        
+        if greetings_available:
+            # Get random greeting from available ones
+            index = random.randint(0, len(greetings_available) - 1)
+            greeting = greetings_available.pop(index)
+            greetings_used.append(greeting)
+            return greeting
+        else:
+            return "欢迎光临"  # Fallback
 
 # def getProdcutDetail(machine_id):
     # apiResult = fet
@@ -211,8 +314,8 @@ def suggest_loop():
     while not stop_event.is_set():
         time.sleep(suggest_interval)
         if application_should_run and face_detected:
-            index = random.randint(0, len(AUTO_SUGGESTIONS) - 1)
-            text = f"。　{AUTO_SUGGESTIONS[index]}　。"
+            suggestion = get_next_suggestion(is_person_present=True)
+            text = f"。　{suggestion}　。"
             queue_speech(text, 'suggestion', priority=3)  # Lower priority than greetings
 
 # Auto-speak thread function - speaks every minute when no user exists
@@ -223,8 +326,8 @@ def auto_speak_loop():
         # Only speak when no user is detected
         if application_should_run and not face_detected:
             # Use specific messages for when no user is present
-            index = random.randint(0, len(NO_PERSON_AUTO_SUGGESTIONS) - 1)
-            text = f"。　{NO_PERSON_AUTO_SUGGESTIONS[index]}　。"
+            suggestion = get_next_suggestion(is_person_present=False)
+            text = f"。　{suggestion}　。"
             queue_speech(text, 'auto_speak', priority=4)  # Lowest priority
 
 
@@ -273,7 +376,7 @@ def greet_user(gender):
     if not GREETINGs:
         return False
         
-    greeting = random.choice(GREETINGs)
+    greeting = get_next_greeting()
     if gender == 'M':
         text = f"。先生　{greeting}　。"
     elif gender == 'F':
@@ -451,6 +554,9 @@ def face_detection_worker():
     detection_times = deque(maxlen=10)  # Track last 10 detection times
     avg_detection_time = 0.2  # Initial estimate
     
+    # WebSocket absence tracking
+    last_user_present_state = False
+    
     print("Face detection worker started")
     
     while not stop_event.is_set():
@@ -484,6 +590,20 @@ def face_detection_worker():
                 latest_faces = faces
                 detection_timestamp = timestamp
             
+            # Track user presence state changes for immediate WebSocket updates
+            current_user_present = bool(faces)
+            if current_user_present != last_user_present_state:
+                if not current_user_present:
+                    # User just became absent - send immediate update
+                    update_user_presence(
+                        user_present=False,
+                        user_count=0,
+                        distance=None,
+                        gender=None,
+                        age=None
+                    )
+                last_user_present_state = current_user_present
+            
             # Put results in queue for main thread with performance info
             result_data = {
                 'faces': faces,
@@ -501,14 +621,27 @@ def face_detection_worker():
                 gender = parse_gender(closest_face)
                 age = getattr(closest_face, 'age', 25)
                 
+                # Calculate distance for WebSocket
+                face_width = (closest_face.bbox[2] - closest_face.bbox[0])
+                distance = calculate_distance(face_width)
+                
                 # Debug detection results
                 print(f"Detected: Gender={gender}, Age={age}")
                 if gender == 'unknown':
                     print(f"Face attributes: {[attr for attr in dir(closest_face) if not attr.startswith('_')]}")
                 
+                # PARALLEL EXECUTION: Send WebSocket update immediately when user detected
+                update_user_presence(
+                    user_present=True,
+                    user_count=len(faces),
+                    distance=distance if distance != float('inf') else None,
+                    gender=gender if gender != 'unknown' else None,
+                    age=age
+                )
+                
                 # Choose greeting based on actual detected gender and available greetings
                 if GREETINGs:
-                    base_greeting = random.choice(GREETINGs)
+                    base_greeting = get_next_greeting()
                     if gender == 'M':
                         greeting_text = f"。先生　{base_greeting}　。"
                     elif gender == 'F':
@@ -550,6 +683,15 @@ def face_detection_worker():
         except Exception as e:
             print(f"Face detection worker error: {e}")
             time.sleep(0.1)
+    
+    # When exiting, send final absence update
+    update_user_presence(
+        user_present=False,
+        user_count=0,
+        distance=None,
+        gender=None,
+        age=None
+    )
 
 # Frame cleanup thread function
 def frame_cleanup_worker():
@@ -847,6 +989,25 @@ def face_detection_loop():
                 absence_start = None
                 absent = False
                 
+                # Update WebSocket with user presence (ongoing updates, less frequent than initial detection)
+                # This provides continuous updates for existing users
+                closest_face_for_ws = None
+                if faces:
+                    closest_face_for_ws = max(faces, key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]))
+                
+                # Only send updates every few seconds to avoid spam (initial detection handles immediate updates)
+                global last_ws_update_time
+                
+                if current_time - last_ws_update_time >= 2.0:  # Update every 2 seconds
+                    update_user_presence(
+                        user_present=True,
+                        user_count=len(faces),
+                        distance=closest_face_distance if closest_face_distance != float('inf') else None,
+                        gender=parse_gender(closest_face_for_ws) if closest_face_for_ws else None,
+                        age=getattr(closest_face_for_ws, 'age', None) if closest_face_for_ws else None
+                    )
+                    last_ws_update_time = current_time
+                
                 # Process each detected face
                 for face in faces:
                     x1, y1, x2, y2 = map(int, face.bbox)
@@ -928,6 +1089,15 @@ def face_detection_loop():
                     cv2.putText(frame, "User too far", (20, 160), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 2)
                 # Set the USER_ABSENT event when user is absent or too far
                 USER_ABSENT.set()
+                
+                # Update WebSocket with user absence
+                update_user_presence(
+                    user_present=False,
+                    user_count=0,
+                    distance=None,
+                    gender=None,
+                    age=None
+                )
             else:
                 # Clear the USER_ABSENT event when user is present and not too far
                 USER_ABSENT.clear()
@@ -997,6 +1167,10 @@ if __name__ == "__main__":
     cpu_optimizer = get_optimizer()
     cpu_optimizer.start_monitoring()
     
+    # Initialize WebSocket server
+    print("Initializing WebSocket server...")
+    websocket_server = init_websocket_server(host='192.168.2.42', port=8765)
+    
     # Initialize TTS
     print("Initializing TTS API...")
     init_dashscope_api_key()    
@@ -1035,6 +1209,12 @@ if __name__ == "__main__":
         # print(NO_PERSON_AUTO_SUGGESTIONS)
         # sys.exit(-1)
         # print(AUTO_SUGGESTIONS)
+        
+        # Initialize deck shuffling for suggestions
+        initialize_suggestion_decks()
+        
+        # Initialize deck shuffling for greetings
+        initialize_greeting_deck()
     else:
         print("Using default configuration...")
         # Fallback configuration
@@ -1042,6 +1222,12 @@ if __name__ == "__main__":
         AUTO_SUGGESTIONS = ["需要推荐吗?", "要试试我们的招牌饮品吗?", "有什么可以帮您的?"]
         NO_PERSON_AUTO_SUGGESTIONS = ["欢迎光临", "需要帮助请随时呼唤我", "今日特色等您品尝"]
         SYSTEM_PROMPT = "你是一个友好的咖啡店助手。" + NO_RESPONSE_NEEDED_RULE
+    
+    # Initialize deck shuffling for suggestions
+    initialize_suggestion_decks()
+    
+    # Initialize deck shuffling for greetings
+    initialize_greeting_deck()
     
     # Initialize task monitoring
     print("Initializing task monitoring...")

@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>User Presence Monitor</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            border-radius: 10px;
+            padding: 30px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .status {
+            font-size: 24px;
+            font-weight: bold;
+            text-align: center;
+            padding: 20px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        .present {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .absent {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .info-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        .info-item {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            border-left: 4px solid #007bff;
+        }
+        .info-label {
+            font-weight: bold;
+            color: #495057;
+            font-size: 14px;
+        }
+        .info-value {
+            font-size: 18px;
+            color: #212529;
+            margin-top: 5px;
+        }
+        .connection-status {
+            text-align: center;
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            font-weight: bold;
+        }
+        .connected {
+            background-color: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        .disconnected {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .log {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+            padding: 15px;
+            height: 200px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .controls {
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 0 5px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>User Presence Monitor</h1>
+        
+        <div id="connectionStatus" class="connection-status disconnected">
+            Disconnected from WebSocket
+        </div>
+        
+        <div class="controls">
+            <button id="connectBtn" onclick="connect()">Connect</button>
+            <button id="disconnectBtn" onclick="disconnect()" disabled>Disconnect</button>
+            <button onclick="clearLog()">Clear Log</button>
+            <button onclick="pingServer()">Ping Server</button>
+        </div>
+        
+        <div id="userStatus" class="status absent">
+            User Status: Unknown
+        </div>
+        
+        <div class="info-grid">
+            <div class="info-item">
+                <div class="info-label">User Count</div>
+                <div id="userCount" class="info-value">-</div>
+            </div>
+            <div class="info-item">
+                <div class="info-label">Distance</div>
+                <div id="distance" class="info-value">-</div>
+            </div>
+            <div class="info-item">
+                <div class="info-label">Gender</div>
+                <div id="gender" class="info-value">-</div>
+            </div>
+            <div class="info-item">
+                <div class="info-label">Age</div>
+                <div id="age" class="info-value">-</div>
+            </div>
+            <div class="info-item">
+                <div class="info-label">Last Detection</div>
+                <div id="lastDetection" class="info-value">-</div>
+            </div>
+            <div class="info-item">
+                <div class="info-label">Connection Time</div>
+                <div id="connectionTime" class="info-value">-</div>
+            </div>
+        </div>
+        
+        <h3>Event Log</h3>
+        <div id="log" class="log"></div>
+    </div>
+
+    <script>
+        let ws = null;
+        let connectionStartTime = null;
+
+        function log(message) {
+            const logElement = document.getElementById('log');
+            const timestamp = new Date().toLocaleTimeString();
+            logElement.innerHTML += `[${timestamp}] ${message}\n`;
+            logElement.scrollTop = logElement.scrollHeight;
+        }
+
+        function updateConnectionStatus(connected) {
+            const statusElement = document.getElementById('connectionStatus');
+            const connectBtn = document.getElementById('connectBtn');
+            const disconnectBtn = document.getElementById('disconnectBtn');
+            
+            if (connected) {
+                statusElement.textContent = 'Connected to WebSocket';
+                statusElement.className = 'connection-status connected';
+                connectBtn.disabled = true;
+                disconnectBtn.disabled = false;
+                connectionStartTime = new Date();
+                updateConnectionTime();
+            } else {
+                statusElement.textContent = 'Disconnected from WebSocket';
+                statusElement.className = 'connection-status disconnected';
+                connectBtn.disabled = false;
+                disconnectBtn.disabled = true;
+                connectionStartTime = null;
+                document.getElementById('connectionTime').textContent = '-';
+            }
+        }
+
+        function updateConnectionTime() {
+            if (connectionStartTime) {
+                const now = new Date();
+                const diff = Math.floor((now - connectionStartTime) / 1000);
+                const minutes = Math.floor(diff / 60);
+                const seconds = diff % 60;
+                document.getElementById('connectionTime').textContent = 
+                    `${minutes}:${seconds.toString().padStart(2, '0')}`;
+            }
+        }
+
+        function updateUserStatus(data) {
+            const statusElement = document.getElementById('userStatus');
+            const userPresent = data.user_present;
+            
+            if (userPresent) {
+                statusElement.textContent = 'User Status: Present';
+                statusElement.className = 'status present';
+            } else {
+                statusElement.textContent = 'User Status: Absent';
+                statusElement.className = 'status absent';
+            }
+            
+            // Update info fields
+            document.getElementById('userCount').textContent = data.user_count || '-';
+            document.getElementById('distance').textContent = data.distance ? `${data.distance.toFixed(2)}m` : '-';
+            document.getElementById('gender').textContent = data.gender || '-';
+            document.getElementById('age').textContent = data.age || '-';
+            
+            if (data.last_detection_time) {
+                const lastDetection = new Date(data.last_detection_time * 1000);
+                document.getElementById('lastDetection').textContent = lastDetection.toLocaleTimeString();
+            } else {
+                document.getElementById('lastDetection').textContent = '-';
+            }
+        }
+
+        function connect() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                log('Already connected');
+                return;
+            }
+
+            const wsUrl = 'ws://192.168.2.42:8765';
+            log(`Connecting to ${wsUrl}...`);
+            
+            ws = new WebSocket(wsUrl);
+            
+            ws.onopen = function(event) {
+                log('Connected to WebSocket server');
+                updateConnectionStatus(true);
+                
+                // Request current status
+                ws.send(JSON.stringify({type: 'get_status'}));
+            };
+            
+            ws.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    log(`Received: ${JSON.stringify(data)}`);
+                    
+                    if (data.type === 'status_update') {
+                        updateUserStatus(data);
+                    } else if (data.type === 'pong') {
+                        log('Pong received from server');
+                    } else if (data.error) {
+                        log(`Server error: ${data.error}`);
+                    }
+                } catch (e) {
+                    log(`Error parsing message: ${e.message}`);
+                }
+            };
+            
+            ws.onclose = function(event) {
+                log(`Connection closed: ${event.code} - ${event.reason}`);
+                updateConnectionStatus(false);
+            };
+            
+            ws.onerror = function(error) {
+                log(`WebSocket error: ${error}`);
+                updateConnectionStatus(false);
+            };
+        }
+
+        function disconnect() {
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+        }
+
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+        }
+
+        function pingServer() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({type: 'ping'}));
+                log('Ping sent to server');
+            } else {
+                log('Not connected to server');
+            }
+        }
+
+        // Update connection time every second
+        setInterval(updateConnectionTime, 1000);
+
+        // Auto-connect on page load
+        window.onload = function() {
+            log('Page loaded - click Connect to start monitoring');
+        };
+    </script>
+</body>
+</html>
