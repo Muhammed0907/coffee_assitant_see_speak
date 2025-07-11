@@ -11,7 +11,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class UserPresenceWebSocketServer:
-    def __init__(self, host='192.168.2.42', port=8765):
+    def __init__(self, host='localhost', port=8765):
         self.host = host
         self.port = port
         self.clients: Set[websockets.WebSocketServerProtocol] = set()
@@ -48,8 +48,11 @@ class UserPresenceWebSocketServer:
         """Send data to a specific client"""
         try:
             message = json.dumps(data)
+            logger.info(f"Sending to client: {data}")
             await websocket.send(message)
+            logger.info("Message sent successfully")
         except websockets.exceptions.ConnectionClosed:
+            logger.error("Client connection closed while sending")
             self.clients.discard(websocket)
         except Exception as e:
             logger.error(f"Error sending to client: {e}")
@@ -80,6 +83,7 @@ class UserPresenceWebSocketServer:
         try:
             async for message in websocket:
                 try:
+                    print(f"message..... {message}")
                     data = json.loads(message)
                     await self.handle_client_message(websocket, data)
                 except json.JSONDecodeError:
@@ -95,21 +99,82 @@ class UserPresenceWebSocketServer:
             
     async def handle_client_message(self, websocket, data):
         """Handle messages from clients"""
-        message_type = data.get('type')
+        logger.info(f"Received message from client: {data}")
+        
+        # Handle both {"type": "ping"} and {"data": "ping"} formats
+        message_type = data.get('type') or data.get('data')
+        logger.info(f"Extracted message type: {message_type}")
         
         if message_type == 'ping':
+            logger.info("Processing ping command")
             await self.send_to_client(websocket, {
                 'type': 'pong',
                 'timestamp': time.time()
             })
+            logger.info("Pong response sent")
+        elif message_type == 'pong':
+            logger.info("Received pong from client")
+            # Just acknowledge the pong, no response needed
         elif message_type == 'get_status':
             await self.send_to_client(websocket, {
                 'type': 'status_update',
                 **self.current_user_status
             })
+        elif message_type == 'get_config':
+            await self.send_to_client(websocket, {
+                'type': 'config_response',
+                'broadcast_interval': self.broadcast_interval,
+                'interval_broadcasting': self.interval_broadcasting,
+                'throttle_interval': self.immediate_broadcast_throttle
+            })
+        elif message_type == 'set_interval':
+            # Allow client to change broadcast interval
+            new_interval = data.get('interval', 30)
+            if 5 <= new_interval <= 300:  # Between 5 seconds and 5 minutes
+                self.broadcast_interval = new_interval
+                await self.send_to_client(websocket, {
+                    'type': 'interval_updated',
+                    'new_interval': new_interval,
+                    'status': 'success'
+                })
+                logger.info(f"Broadcast interval updated to {new_interval} seconds by client")
+            else:
+                await self.send_to_client(websocket, {
+                    'type': 'error',
+                    'message': 'Interval must be between 5 and 300 seconds'
+                })
+        elif message_type == 'client_info':
+            # Client can send information about itself
+            client_data = data.get('data', {})
+            await self.send_to_client(websocket, {
+                'type': 'client_info_received',
+                'timestamp': time.time(),
+                'client_address': str(websocket.remote_address),
+                'status': 'acknowledged'
+            })
+            logger.info(f"Received client info: {client_data}")
+        elif message_type == 'request_immediate_update':
+            # Force an immediate status broadcast
+            message = {
+                'type': 'status_update',
+                'timestamp': time.time(),
+                'broadcast_reason': 'client_requested',
+                **self.current_user_status
+            }
+            await self.send_to_client(websocket, message)
+        elif message_type == 'server_ping':
+            # Client requests server to ping them
+            logger.info("Client requested server ping")
+            await self.send_to_client(websocket, {
+                'type': 'ping',
+                'timestamp': time.time(),
+                'message': 'Server ping - please respond with pong'
+            })
         else:
             await self.send_to_client(websocket, {
-                'error': f'Unknown message type: {message_type}'
+                'type': 'error',
+                'message': f'Unknown message type: {message_type}',
+                'available_types': ['ping', 'pong', 'get_status', 'get_config', 'set_interval', 'client_info', 'request_immediate_update', 'server_ping']
             })
     
     async def interval_broadcast_task(self):

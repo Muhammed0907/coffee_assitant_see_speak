@@ -1169,7 +1169,7 @@ if __name__ == "__main__":
     
     # Initialize WebSocket server
     print("Initializing WebSocket server...")
-    websocket_server = init_websocket_server(host='localhost', port=8765)
+    websocket_server = init_websocket_server(host='192.168.2.42', port=8765)
     
     # Initialize TTS
     print("Initializing TTS API...")
