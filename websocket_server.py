@@ -25,6 +25,11 @@ class UserPresenceWebSocketServer:
         }
         self.server = None
         self.loop = None
+        self.interval_task = None
+        self.interval_broadcasting = False
+        self.broadcast_interval = 30  # seconds
+        self.last_immediate_broadcast = 0
+        self.immediate_broadcast_throttle = 2.0  # minimum 2 seconds between immediate broadcasts
         
     async def register_client(self, websocket):
         """Register a new WebSocket client"""
@@ -107,32 +112,108 @@ class UserPresenceWebSocketServer:
                 'error': f'Unknown message type: {message_type}'
             })
     
+    async def interval_broadcast_task(self):
+        """Background task to broadcast every 30 seconds when no user is detected"""
+        while self.interval_broadcasting:
+            try:
+                await asyncio.sleep(self.broadcast_interval)
+                if self.interval_broadcasting and not self.current_user_status['user_present']:
+                    message = {
+                        'type': 'status_update',
+                        'timestamp': time.time(),
+                        'broadcast_reason': 'interval',
+                        **self.current_user_status
+                    }
+                    await self.broadcast_to_all(message)
+                    logger.info("Interval broadcast sent (no user detected)")
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Error in interval broadcast task: {e}")
+    
+    async def start_interval_broadcasting(self):
+        """Start the interval broadcasting task"""
+        if not self.interval_broadcasting:
+            self.interval_broadcasting = True
+            self.interval_task = asyncio.create_task(self.interval_broadcast_task())
+            logger.info("Started interval broadcasting (30s intervals)")
+    
+    async def stop_interval_broadcasting(self):
+        """Stop the interval broadcasting task"""
+        if self.interval_broadcasting:
+            self.interval_broadcasting = False
+            if self.interval_task:
+                self.interval_task.cancel()
+                try:
+                    await self.interval_task
+                except asyncio.CancelledError:
+                    pass
+                self.interval_task = None
+            logger.info("Stopped interval broadcasting")
+    
     def update_user_status(self, user_present=False, user_count=0, distance=None, gender=None, age=None):
         """Update user status and broadcast to all clients"""
+        current_time = time.time()
+        
+        # Check if user presence changed
+        previous_user_present = self.current_user_status['user_present']
+        
         # Update status
         self.current_user_status.update({
             'user_present': user_present,
             'user_count': user_count,
-            'last_detection_time': time.time() if user_present else self.current_user_status['last_detection_time'],
+            'last_detection_time': current_time if user_present else self.current_user_status['last_detection_time'],
             'distance': distance,
             'gender': gender,
             'age': age
         })
         
-        # Create broadcast message
-        message = {
-            'type': 'status_update',
-            'timestamp': time.time(),
-            **self.current_user_status
-        }
-        
-        # Schedule broadcast in the event loop
+        # Schedule broadcast and interval management in the event loop
         if self.loop and not self.loop.is_closed():
             try:
-                asyncio.run_coroutine_threadsafe(
-                    self.broadcast_to_all(message), 
-                    self.loop
-                )
+                # Handle broadcasting with throttling
+                should_broadcast = False
+                
+                # Always broadcast when user presence changes
+                if previous_user_present != user_present:
+                    should_broadcast = True
+                    self.last_immediate_broadcast = current_time
+                    
+                    if user_present:
+                        # User detected: stop interval broadcasting
+                        asyncio.run_coroutine_threadsafe(
+                            self.stop_interval_broadcasting(),
+                            self.loop
+                        )
+                        logger.info("User detected - stopped interval broadcasting")
+                    else:
+                        # User absent: start interval broadcasting
+                        asyncio.run_coroutine_threadsafe(
+                            self.start_interval_broadcasting(),
+                            self.loop
+                        )
+                        logger.info("User absent - started interval broadcasting")
+                
+                # For ongoing presence updates, only throttle if user is present
+                elif user_present and current_time - self.last_immediate_broadcast >= self.immediate_broadcast_throttle:
+                    should_broadcast = True
+                    self.last_immediate_broadcast = current_time
+                # If user is absent, let the interval broadcasting handle it (don't broadcast here)
+                
+                # Send broadcast if needed
+                if should_broadcast:
+                    message = {
+                        'type': 'status_update',
+                        'timestamp': current_time,
+                        'broadcast_reason': 'immediate',
+                        **self.current_user_status
+                    }
+                    
+                    asyncio.run_coroutine_threadsafe(
+                        self.broadcast_to_all(message), 
+                        self.loop
+                    )
+                
             except Exception as e:
                 logger.error(f"Error scheduling broadcast: {e}")
     
@@ -144,6 +225,9 @@ class UserPresenceWebSocketServer:
             self.port
         )
         logger.info(f"WebSocket server started on ws://{self.host}:{self.port}")
+        
+        # Start interval broadcasting since initially no users are present
+        await self.start_interval_broadcasting()
         
     def run_server(self):
         """Run the server in a separate thread"""
@@ -169,6 +253,12 @@ class UserPresenceWebSocketServer:
     def stop(self):
         """Stop the WebSocket server"""
         if self.loop and not self.loop.is_closed():
+            # Stop interval broadcasting first
+            if self.interval_broadcasting:
+                asyncio.run_coroutine_threadsafe(
+                    self.stop_interval_broadcasting(),
+                    self.loop
+                )
             self.loop.call_soon_threadsafe(self.loop.stop)
         logger.info("WebSocket server stopped")
 
