@@ -10,7 +10,7 @@ import json
 import time
 
 class UserPresenceClient:
-    def __init__(self, uri='ws://192.168.2.42:8765'):
+    def __init__(self, uri='ws://7ex30qo57151.vicp.fun:8765'):
         self.uri = uri
         self.websocket = None
         

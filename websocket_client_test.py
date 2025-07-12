@@ -8,7 +8,7 @@ import json
 import time
 
 class WebSocketClient:
-    def __init__(self, url='ws://192.168.2.42:8765'):
+    def __init__(self, url='ws://7ex30qo57151.vicp.fun:8765'):
         self.url = url
         self.websocket = None
         

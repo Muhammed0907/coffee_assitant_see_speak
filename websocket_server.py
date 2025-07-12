@@ -83,7 +83,7 @@ class UserPresenceWebSocketServer:
         try:
             async for message in websocket:
                 try:
-                    print(f"message..... {message}")
+                    print(f"message2..... {message}")
                     data = json.loads(message)
                     await self.handle_client_message(websocket, data)
                 except json.JSONDecodeError:

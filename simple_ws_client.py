@@ -7,7 +7,7 @@ import websockets
 import json
 
 async def test_websocket():
-    uri = "ws://localhost:8765"
+    uri = "ws://7ex30qo57151.vicp.fun:8765"
     
     async with websockets.connect(uri) as websocket:
         print("✅ Connected!")
