@@ -625,10 +625,18 @@ def face_detection_worker():
                 face_width = (closest_face.bbox[2] - closest_face.bbox[0])
                 distance = calculate_distance(face_width)
                 
-                # Debug detection results
+                # Debug detection results - ENHANCED DEBUGGING
                 print(f"Detected: Gender={gender}, Age={age}")
+                print(f"Raw face attributes: {[attr for attr in dir(closest_face) if not attr.startswith('_')]}")
+                
+                # Check specific gender attributes
+                for attr in ['sex', 'gender', 'g']:
+                    if hasattr(closest_face, attr):
+                        raw_value = getattr(closest_face, attr)
+                        print(f"Found {attr} = {raw_value} (type: {type(raw_value)})")
+                
                 if gender == 'unknown':
-                    print(f"Face attributes: {[attr for attr in dir(closest_face) if not attr.startswith('_')]}")
+                    print("WARNING: Gender detection failed - check InsightFace model loading")
                 
                 # PARALLEL EXECUTION: Send WebSocket update immediately when user detected
                 update_user_presence(

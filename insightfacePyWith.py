@@ -76,8 +76,16 @@ try:
         # Greeting logic
         if face_detected and not is_greeted:
             if NOW_SPEAKING.acquire(blocking=False):
-                # choose greeting based on detected gender
-                gender = faces[0].sex
+                # Import parse_gender function from main
+                import sys
+                import os
+                sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+                from main import parse_gender
+                
+                # choose greeting based on detected gender - using robust parsing
+                gender = parse_gender(faces[0])
+                print(f"insightfacePyWith.py - Detected gender: {gender}")
+                
                 if gender == 'M':
                     lst = male_greetings
                 elif gender == 'F':
@@ -111,7 +119,9 @@ try:
             for face in faces:
                 x1, y1, x2, y2 = map(int, face.bbox)
                 
-                label = f"{face.sex}:{face.age}"
+                # Use robust gender parsing for display too
+                display_gender = parse_gender(face)
+                label = f"{display_gender}:{face.age}"
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
                 cv2.putText(frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255,255,255),2)
         else:
