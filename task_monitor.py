@@ -58,6 +58,7 @@ class TaskMonitor:
         
         # Application should run if task is executing or busy
         should_run = task_status == "正在执行" and task_busy
+        # should_run = False
         
         print(f"Task Status: {task_status}, Task Busy: {task_busy}, Should Run: {should_run}")
         return should_run

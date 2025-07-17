@@ -28,7 +28,7 @@ from greetings import (male_greetings,
                        female_greetings, 
                        neutral_greetings)
 from suggestion import AUTO_SUGGESTIONS
-from chat import SYSTEM_PROMPT, NO_RESPONSE_NEEDED_RULE
+from chat import SYSTEM_PROMPT, NO_RESPONSE_NEEDED_RULE, default
 from echocheck import is_likely_system_echo
 import random
 import os
@@ -53,6 +53,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--headless", action="store_true", help="Run without GUI display")
 # Cam id
 parser.add_argument("--camid", type=int, default=1, help="Camera ID")
+# Machine id
+parser.add_argument("--machineid", type=str, default="7", help="Machine ID")
 args = parser.parse_args()
 
 absence_threshold = 5  # seconds
@@ -66,6 +68,9 @@ is_greeted = False
 # Task monitoring variables
 task_monitor = None
 application_should_run = True
+
+# Gender detection control
+GREET_GENDER_ENABLED = False  # Controls whether gender detection is enabled
 
 # Performance optimization variables
 frame_queue = queue.Queue(maxsize=3)  # Small queue to prevent memory buildup
@@ -122,6 +127,11 @@ suggestion_lock = threading.Lock()  # Thread safety for suggestion arrays
 greetings_available = []
 greetings_used = []
 greeting_lock = threading.Lock()  # Thread safety for greeting arrays
+
+# Deck shuffling for busy speak (to avoid repetition)
+busy_speak_available = []
+busy_speak_used = []
+busy_speak_lock = threading.Lock()  # Thread safety for busy speak arrays
 
 def initialize_suggestion_decks():
     """Initialize the deck shuffling arrays for auto-suggestions"""
@@ -209,6 +219,38 @@ def get_next_greeting():
             return greeting
         else:
             return "欢迎光临"  # Fallback
+
+def initialize_busy_speak_deck(busy_speak_array):
+    """Initialize the deck shuffling arrays for busy speak"""
+    global busy_speak_available, busy_speak_used
+    
+    with busy_speak_lock:
+        # Initialize BUSY_SPEAK deck
+        busy_speak_available = busy_speak_array.copy()
+        busy_speak_used = []
+        
+        print(f"Initialized busy speak deck: {len(busy_speak_available)} messages")
+
+def get_next_busy_speak():
+    """Get next busy speak message using deck shuffling approach"""
+    global busy_speak_available, busy_speak_used
+    
+    with busy_speak_lock:
+        # Handle BUSY_SPEAK
+        if not busy_speak_available:
+            # Refill from used busy speak messages
+            busy_speak_available = busy_speak_used.copy()
+            busy_speak_used = []
+            print("Refilled busy speak deck")
+        
+        if busy_speak_available:
+            # Get random busy speak message from available ones
+            index = random.randint(0, len(busy_speak_available) - 1)
+            message = busy_speak_available.pop(index)
+            busy_speak_used.append(message)
+            return message
+        else:
+            return "在充电。"  # Fallback
 
 # def getProdcutDetail(machine_id):
     # apiResult = fet
@@ -330,20 +372,34 @@ def auto_speak_loop():
             text = f"。　{suggestion}　。"
             queue_speech(text, 'auto_speak', priority=4)  # Lowest priority
 
+# Charging announcement thread function - announces "charging..." every 3 minutes when application is disabled
+def charging_announcement_loop(timeLm,speach):
+    charging_interval = timeLm  # 3 minutes (180 seconds)
+    while not stop_event.is_set():
+        time.sleep(charging_interval)
+        # Only announce when application is disabled
+        if not application_should_run:
+            # Get random busy speak message
+            message = get_next_busy_speak()
+            queue_speech(message, 'charging', priority=5)  # Very low priority
+
 
 # Listen status monitoring thread function
 def listen_status_monitor():
     """Monitor listening status from API every minute"""
+    global GREET_GENDER_ENABLED
     monitor_interval = 60  # 1 minute
-    machine_id = "6"  # Using the same machine ID as in main
+    machine_id = args.machineid  # Use machine ID from command line arguments
     
     while not stop_event.is_set():
         try:
             status_result = check_listen_status(machine_id)
+            print(f"status_result: {status_result}")
             code = status_result.get("code", 1)
             data = status_result.get("data", False)
+            is_greet_gender = data.get("isGreetGender", False) if isinstance(data, dict) else status_result.get("isGreetGender", False)
             
-            print(f"Listen Status - Data: {data}, Code: {code}")
+            print(f"Listen Status - Data: {data}, Code: {code}, isGreetGender: {is_greet_gender}")
             
             if code == 1:
                 print("Listen Status Error - API returned error code 1")
@@ -359,6 +415,14 @@ def listen_status_monitor():
                 if previous_status != data:
                     status_text = "enabled" if data else "disabled"
                     print(f"Microphone listening {status_text}")
+                
+                # Update gender detection setting
+                previous_gender_setting = GREET_GENDER_ENABLED
+                GREET_GENDER_ENABLED = is_greet_gender
+                
+                if previous_gender_setting != is_greet_gender:
+                    gender_text = "enabled" if is_greet_gender else "disabled"
+                    print(f"Gender detection {gender_text}")
             
         except Exception as e:
             print(f"Listen Status Monitor Error: {e}")
@@ -371,15 +435,15 @@ GREETINGs = []
 # Greet user based on detected gender (NON-BLOCKING)
 def greet_user(gender):
     """Fast, non-blocking greeting function"""
-    global is_greeted, GREETINGs
+    global is_greeted, GREETINGs, GREET_GENDER_ENABLED
     
     if not GREETINGs:
         return False
         
     greeting = get_next_greeting()
-    if gender == 'M':
+    if GREET_GENDER_ENABLED and gender == 'M':
         text = f"。先生　{greeting}　。"
-    elif gender == 'F':
+    elif GREET_GENDER_ENABLED and gender == 'F':
         text = f"。女士　{greeting}　。"
     else:
         text = f"。　{greeting}　。"
@@ -613,54 +677,60 @@ def face_detection_worker():
             }
             
             # Immediate greeting logic for faster response with proper gender detection
-            global is_greeted
+            global is_greeted, GREET_GENDER_ENABLED
             if faces and application_should_run and not is_greeted:
                 closest_face = max(faces, key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]))
                 
                 # Get gender and age from face detection with robust parsing
-                gender = parse_gender(closest_face)
-                age = getattr(closest_face, 'age', 25)
+                if GREET_GENDER_ENABLED:
+                    gender = parse_gender(closest_face)
+                    age = getattr(closest_face, 'age', 25)
+                    
+                    # Debug detection results - ENHANCED DEBUGGING
+                    print(f"Detected: Gender={gender}, Age={age}")
+                    print(f"Raw face attributes: {[attr for attr in dir(closest_face) if not attr.startswith('_')]}")
+                    
+                    # Check specific gender attributes
+                    for attr in ['sex', 'gender', 'g']:
+                        if hasattr(closest_face, attr):
+                            raw_value = getattr(closest_face, attr)
+                            print(f"Found {attr} = {raw_value} (type: {type(raw_value)})")
+                    
+                    if gender == 'unknown':
+                        print("WARNING: Gender detection failed - check InsightFace model loading")
+                else:
+                    # Gender detection disabled - use neutral values
+                    gender = 'unknown'
+                    age = 25
+                    print("Gender detection disabled - using neutral greeting")
                 
                 # Calculate distance for WebSocket
                 face_width = (closest_face.bbox[2] - closest_face.bbox[0])
                 distance = calculate_distance(face_width)
-                
-                # Debug detection results - ENHANCED DEBUGGING
-                print(f"Detected: Gender={gender}, Age={age}")
-                print(f"Raw face attributes: {[attr for attr in dir(closest_face) if not attr.startswith('_')]}")
-                
-                # Check specific gender attributes
-                for attr in ['sex', 'gender', 'g']:
-                    if hasattr(closest_face, attr):
-                        raw_value = getattr(closest_face, attr)
-                        print(f"Found {attr} = {raw_value} (type: {type(raw_value)})")
-                
-                if gender == 'unknown':
-                    print("WARNING: Gender detection failed - check InsightFace model loading")
                 
                 # PARALLEL EXECUTION: Send WebSocket update immediately when user detected
                 update_user_presence(
                     user_present=True,
                     user_count=len(faces),
                     distance=distance if distance != float('inf') else None,
-                    gender=gender if gender != 'unknown' else None,
+                    gender=gender if (gender != 'unknown' and GREET_GENDER_ENABLED) else None,
                     age=age
                 )
                 
-                # Choose greeting based on actual detected gender and available greetings
+                # Choose greeting based on gender detection setting and available greetings
                 if GREETINGs:
                     base_greeting = get_next_greeting()
-                    if gender == 'M':
+                    if GREET_GENDER_ENABLED and gender == 'M':
                         greeting_text = f"。先生　{base_greeting}　。"
-                    elif gender == 'F':
+                    elif GREET_GENDER_ENABLED and gender == 'F':
                         greeting_text = f"。女士　{base_greeting}　。"
                     else:
                         greeting_text = f"。　{base_greeting}　。"
                 else:
                     # Fallback greetings if no custom greetings available
-                    if gender == 'M':
+                    if GREET_GENDER_ENABLED and gender == 'M':
                         greeting_text = "。先生　欢迎光临　。"
-                    elif gender == 'F':
+                    elif GREET_GENDER_ENABLED and gender == 'F':
                         greeting_text = "。女士　欢迎光临　。"
                     else:
                         greeting_text = "。您好　欢迎光临　。"
@@ -1159,7 +1229,6 @@ def get_user_input():
 #         userQueryQueue.put(user_input)
 
 if __name__ == "__main__":
-    
     # print(NO_RESPONSE_NEEDED_RULE)
     # global AUTO_SUGGESTIONSs
     # global GREETINGs
@@ -1185,7 +1254,7 @@ if __name__ == "__main__":
 
     print("Fetching product data from API...")
     try:
-        api_result = fetch_product_by_name("6")
+        api_result = fetch_product_by_name(args.machineid)
         if 'error' in api_result:
             print(f"API Error: {api_result['error']}")
             print("Using fallback configuration...")
@@ -1199,47 +1268,55 @@ if __name__ == "__main__":
         result = None
     # print(f"RES:::: {result}")
     # sys.exit(0)
-    if result and result.get("products") and result.get("prompt") and result.get("greetings") and result.get("suggestions"):
-        products = result.get("products")
-        prompt = result.get("prompt")
-
+    # Initialize configuration with defaults from chat.py
+    print("Initializing configuration with defaults and API data...")
+    
+    # Use default values as fallback, override with API data if available
+    products = result.get("products") if result else default.get("products", ["盲盒"])
+    prompt = result.get("prompt") if result else default.get("prompt", "你是一个友好的咖啡店助手。")
+    GREETINGs = result.get("greetings") if result else default.get("greetings", ["欢迎光临", "您好", "欢迎"])
+    AUTO_SUGGESTIONS = result.get("suggestions") if result else default.get("suggestions", ["需要推荐吗?", "要试试我们的招牌饮品吗?", "有什么可以帮您的?"])
+    NO_PERSON_AUTO_SUGGESTIONS = result.get("noPersonSuggestions") if result else default.get("noPersonSuggestions", ["欢迎光临", "需要帮助请随时呼唤我", "今日特色等您品尝"])
+    busy_speak = result.get("busySpeak") if result else default.get("busySpeak", ["在充电。"])
+    busy_speak_time = result.get("busySpeakTime", 180) if result else default.get("busySpeakTime", "180")
+    
+    # Initialize gender detection setting
+    GREET_GENDER_ENABLED = result.get("isGreetGender") if result else default.get("isGreetGender", False)
+    
+    # Ensure busy_speak_time is integer
+    if isinstance(busy_speak_time, str):
+        busy_speak_time = int(busy_speak_time)
+    
+    # Build system prompt
+    if products:
         prompt += ".你可以推荐以下饮品：\n" + ",".join(products)    
-        # aboutPrompt = PromptUnderstand(prompt)
         NO_RESPONSE_NEEDED_RULE = "。\n重要过滤指令: 如果对话不是关于'"  + ",".join(products)+ "' "+  NO_RESPONSE_NEEDED_RULE
         prompt += NO_RESPONSE_NEEDED_RULE
-        # print(prompt)
-        # sys.exit(-1)
-        SYSTEM_PROMPT = prompt
-        # print(result.get("greetings"))
-        GREETINGs = result.get("greetings")
-        AUTO_SUGGESTIONS = result.get("suggestions")
-        NO_PERSON_AUTO_SUGGESTIONS = result.get("noPersonSuggestions", ["欢迎光临", "需要帮助请随时呼唤我"])
-        # print(NO_PERSON_AUTO_SUGGESTIONS)
-        # sys.exit(-1)
-        # print(AUTO_SUGGESTIONS)
-        
-        # Initialize deck shuffling for suggestions
-        initialize_suggestion_decks()
-        
-        # Initialize deck shuffling for greetings
-        initialize_greeting_deck()
+    
+    SYSTEM_PROMPT = prompt
+    
+    # Print configuration source
+    if result:
+        print("Using API configuration with defaults as fallback")
     else:
-        print("Using default configuration...")
-        # Fallback configuration
-        GREETINGs = ["欢迎光临", "您好", "欢迎"]
-        AUTO_SUGGESTIONS = ["需要推荐吗?", "要试试我们的招牌饮品吗?", "有什么可以帮您的?"]
-        NO_PERSON_AUTO_SUGGESTIONS = ["欢迎光临", "需要帮助请随时呼唤我", "今日特色等您品尝"]
-        SYSTEM_PROMPT = "你是一个友好的咖啡店助手。" + NO_RESPONSE_NEEDED_RULE
+        print("Using default configuration from chat.py")
     
-    # Initialize deck shuffling for suggestions
+    print(f"Products: {products}")
+    print(f"Greetings: {len(GREETINGs)} items")
+    print(f"Suggestions: {len(AUTO_SUGGESTIONS)} items")
+    print(f"No-person suggestions: {len(NO_PERSON_AUTO_SUGGESTIONS)} items")
+    print(f"Busy speak: {len(busy_speak)} items")
+    print(f"Busy speak time: {busy_speak_time}s")
+    print(f"Gender detection: {'enabled' if GREET_GENDER_ENABLED else 'disabled'}")
+    
+    # Initialize deck shuffling for all components
     initialize_suggestion_decks()
-    
-    # Initialize deck shuffling for greetings
     initialize_greeting_deck()
+    initialize_busy_speak_deck(busy_speak)
     
     # Initialize task monitoring
     print("Initializing task monitoring...")
-    task_monitor = TaskMonitor(machine_id="6")
+    task_monitor = TaskMonitor(machine_id=args.machineid)
     task_monitor.set_application_callbacks(on_application_start, on_application_stop)
     
     # Set application state reference for listener
@@ -1249,7 +1326,7 @@ if __name__ == "__main__":
     setup_frame_save_directory()
     
     # Start task monitoring
-    # task_monitor.start_monitoring()
+    task_monitor.start_monitoring()
     
     print("Starting application threads...")
     
@@ -1266,6 +1343,7 @@ if __name__ == "__main__":
     threading.Thread(target=suggest_loop, daemon=True).start()
     threading.Thread(target=auto_speak_loop, daemon=True).start()
     threading.Thread(target=listen_status_monitor, daemon=True).start()
+    threading.Thread(target=charging_announcement_loop, args=(int(busy_speak_time),busy_speak,), daemon=True).start()  # Start charging announcement thread
     threading.Thread(target=mic_listen, daemon=True).start()
     # threading.Thread(target=get_user_input, daemon=True).start()
     

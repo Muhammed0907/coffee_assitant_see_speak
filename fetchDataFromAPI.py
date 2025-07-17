@@ -4,7 +4,7 @@ import json
 from urllib.parse import quote
 
 API_BASE_URL = "https://manghe.shundaocehua.cn/screen/ai-assistant/detail/%7BmachineId%7D?machineId="
-LISTEN_STATUS_URL = "https://manghe.shundaocehua.cn/screen/ai-assistant/isListen/"
+LISTEN_STATUS_URL = "https://manghe.shundaocehua.cn/screen/ai-assistant/aiSetting/"
 # API_BASE_URL = "http://localhost:5000/products"
 
 def fetch_product_by_name(machine_id):
@@ -32,21 +32,25 @@ def fetch_product_by_name(machine_id):
 def check_listen_status(machine_id):
     """Check if the system should be listening by fetching isListen API"""
     try:
+        # print()
         url = f"{LISTEN_STATUS_URL}{machine_id}"
         response = requests.get(url, timeout=5)
         
         if response.status_code == 200:
             data = response.json()
+            # print(f"data: {data}")
+            # sys.exit(1)
             return {
                 "code": data.get("code", 1),
                 "data": data.get("data", False),
-                "msg": data.get("msg", None)
+                "msg": data.get("msg", None),
+                "isGreetGender": data.get("isGreetGender", False)
             }
         else:
-            return {"code": 1, "data": False, "msg": f"HTTP {response.status_code}"}
+            return {"code": 1, "data": False, "msg": f"HTTP {response.status_code}", "isGreetGender": False}
             
     except requests.exceptions.RequestException as e:
-        return {"code": 1, "data": False, "msg": f"Connection error: {str(e)}"}
+        return {"code": 1, "data": False, "msg": f"Connection error: {str(e)}", "isGreetGender": False}
 
 def main():
     parser = argparse.ArgumentParser(description="Fetch product details by name")
